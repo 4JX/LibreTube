@@ -20,6 +20,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import retrofit2.HttpException
 import java.io.*
 import java.util.zip.ZipEntry
@@ -64,11 +67,31 @@ class Settings : PreferenceFragmentCompat() {
                     }
                     val channels = ArrayList<String>()
 
-                    inputStream?.bufferedReader()?.readLines()?.forEach {
-                        if (it.isNotBlank()) {
-                            val channelId = it.substringBefore(",")
-                            if (channelId.length == 24)
-                                channels.add(channelId)
+                    val bufferedReader = inputStream?.bufferedReader()
+
+                    // Assume its the NewPipe Subscription format if the file is JSON, otherwise use Youtube as a fallback
+                    if (type == "application/json") {
+                        val mapper = jacksonObjectMapper()
+                        val channelIdRegex = Regex("https://www.youtube.com/channel/([\\w-]{24})")
+                        val parsedJson =
+                            bufferedReader?.let { mapper.readValue<NewpipeSubscriptionsRoot>(it.readText()) }
+                        if (parsedJson != null) {
+                            for (subscription in parsedJson.subscriptions) {
+                                if (subscription.serviceId == 0) {
+                                    channelIdRegex.find(subscription.url)?.groupValues?.get(1)
+                                        ?.let { channelId ->
+                                            channels.add(channelId)
+                                        }
+                                }
+                            }
+                        }
+                    } else {
+                        bufferedReader?.readLines()?.forEach {
+                            if (it.isNotBlank()) {
+                                val channelId = it.substringBefore(",")
+                                if (channelId.length == 24)
+                                    channels.add(channelId)
+                            }
                         }
                     }
 
@@ -254,4 +277,17 @@ class Settings : PreferenceFragmentCompat() {
     }
 }
 
+data class NewpipeSubscriptionsRoot(
+    @JsonProperty("app_version")
+    val appVersion: String,
+    @JsonProperty("app_version_int")
+    val appVersionInt: Int,
+    val subscriptions: List<NewpipeSubscriptionEntry>,
+)
 
+data class NewpipeSubscriptionEntry(
+    @JsonProperty("service_id")
+    val serviceId: Int,
+    val url: String,
+    val name: String,
+)
